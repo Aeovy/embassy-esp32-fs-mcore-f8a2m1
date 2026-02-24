@@ -34,32 +34,52 @@ pub(crate) fn emit_warn(msg: &str) {
 
 /// release 构建下剔除内部调试输出。
 #[cfg(not(debug_assertions))]
+#[allow(dead_code)]
 #[inline]
 pub(crate) fn emit_debug(_msg: &str) {}
 
 /// release 构建下剔除内部调试输出。
 #[cfg(not(debug_assertions))]
+#[allow(dead_code)]
 #[inline]
 pub(crate) fn emit_warn(_msg: &str) {}
 
+// debug 构建：正常输出日志
+#[cfg(debug_assertions)]
 macro_rules! dtu_debug {
     ($($arg:tt)*) => {{
-        #[cfg(debug_assertions)]
-        {
-            let __msg = alloc::format!($($arg)*);
-            $crate::dbglog::emit_debug(&__msg);
-        }
+        let __msg = alloc::format!($($arg)*);
+        $crate::dbglog::emit_debug(&__msg);
     }};
 }
 
+// release 构建：`if false` 让编译器认为变量已使用，优化器直接死代码消除
+#[cfg(not(debug_assertions))]
+macro_rules! dtu_debug {
+    ($($arg:tt)*) => {
+        if false {
+            let _ = alloc::format!($($arg)*);
+        }
+    };
+}
+
+// debug 构建：正常输出警告
+#[cfg(debug_assertions)]
 macro_rules! dtu_warn {
     ($($arg:tt)*) => {{
-        #[cfg(debug_assertions)]
-        {
-            let __msg = alloc::format!($($arg)*);
-            $crate::dbglog::emit_warn(&__msg);
-        }
+        let __msg = alloc::format!($($arg)*);
+        $crate::dbglog::emit_warn(&__msg);
     }};
+}
+
+// release 构建：同上，仅消除 unused variable 警告
+#[cfg(not(debug_assertions))]
+macro_rules! dtu_warn {
+    ($($arg:tt)*) => {
+        if false {
+            let _ = alloc::format!($($arg)*);
+        }
+    };
 }
 
 pub(crate) use dtu_debug;
