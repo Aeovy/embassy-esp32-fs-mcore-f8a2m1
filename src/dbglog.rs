@@ -53,7 +53,7 @@ macro_rules! dtu_debug {
     }};
 }
 
-// release 构建：`if false` 让编译器认为变量已使用，优化器直接死代码消除
+// release 构建
 #[cfg(not(debug_assertions))]
 macro_rules! dtu_debug {
     ($($arg:tt)*) => {
@@ -72,7 +72,7 @@ macro_rules! dtu_warn {
     }};
 }
 
-// release 构建：同上，仅消除 unused variable 警告
+// release 构建
 #[cfg(not(debug_assertions))]
 macro_rules! dtu_warn {
     ($($arg:tt)*) => {
