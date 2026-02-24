@@ -1,0 +1,16 @@
+# 库默认使用 ESP32-S3（对应 default feature = "esp32s3"）
+# 在应用项目中，用自己的 .cargo/config.toml 覆盖此处的 target 即可
+[build]
+target = "xtensa-esp32s3-none-elf"
+rustflags = ["-C", "link-arg=-nostartfiles"]
+
+[target.xtensa-esp32s3-none-elf]
+linker = "/Users/aeovy/.rustup/toolchains/esp/xtensa-esp-elf/esp-15.2.0_20250920/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc"
+
+# RISC-V 系列（C2/C3/C6/H2）使用 stable 工具链的 riscv32 目标，无需额外配置
+[target.riscv32imc-unknown-none-elf]
+[target.riscv32imac-unknown-none-elf]
+[target.riscv32imafc-unknown-none-elf]
+
+[unstable]
+build-std = ["alloc", "core"]

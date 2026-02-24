@@ -1,0 +1,32 @@
+[package]
+name = "embassy-fs-mcore-f8a2m1"
+version = "0.1.0"
+edition = "2024"
+description = "FS-MCore-F8A2M1 (4G Module) driver for Embassy and ESP32"
+
+[dependencies]
+esp-hal = { version = "1.0.0", features = ["unstable"] }
+embassy-time = { version = "0.5.0" }
+embedded-io-async = { version = "0.7.0" }
+defmt = { version = "1.0.1", optional = true }
+esp-println = { version = "0.16.1", optional = true }
+
+[features]
+# ── 芯片型号──────────────────
+esp32 = ["esp-hal/esp32"]
+esp32s2 = ["esp-hal/esp32s2"]
+esp32s3 = ["esp-hal/esp32s3"]
+esp32c2 = ["esp-hal/esp32c2"]
+esp32c3 = ["esp-hal/esp32c3"]
+esp32c6 = ["esp-hal/esp32c6"]
+esp32h2 = ["esp-hal/esp32h2"]
+
+# ── 日志后端（二选一，默认使用 defmt）──────────────────────────────────
+default = ["esp32s3", "dtu-log-defmt"]
+dtu-log-defmt = [
+    "dep:defmt",
+    "esp-hal/defmt",
+    "embassy-time/defmt",
+    "embedded-io-async/defmt",
+]
+dtu-log-esp-println = ["dep:esp-println"]
