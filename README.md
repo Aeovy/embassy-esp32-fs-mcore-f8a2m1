@@ -52,10 +52,8 @@ embassy-fs-mcore-f8a2m1 = { git = "https://github.com/your-org/esp32-fs-mcore-f8
 
 > 若使用本地路径开发：
 > ```toml
-> embassy-fs-mcore-f8a2m1 = { path = "../patches/esp32-fs-mcore-f8a2m1", features = ["esp32s3"] }
+> embassy-fs-mcore-f8a2m1 = { path = "/xx/esp32-fs-mcore-f8a2m1", features = ["esp32s3"] }
 > ```
-
-芯片 feature 会自动透传到 `esp-hal`，**无需在 `esp-hal` 的依赖里再单独声明芯片**。
 
 ---
 
@@ -65,8 +63,6 @@ embassy-fs-mcore-f8a2m1 = { git = "https://github.com/your-org/esp32-fs-mcore-f8
 
 ### Xtensa 系列（ESP32 / ESP32-S2 / ESP32-S3）
 
-需要 `esp` 工具链（通过 [`espup`](https://github.com/esp-rs/espup) 安装）。
-
 ```toml
 # .cargo/config.toml
 [build]
@@ -75,17 +71,10 @@ rustflags = ["-C", "link-arg=-nostartfiles"]
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor --chip esp32s3 --log-format defmt"
-linker = "xtensa-esp32s3-elf-gcc"    # espup 安装后会加入 PATH
+linker = "xtensa-esp32s3-elf-gcc"
 
 [unstable]
 build-std = ["alloc", "core"]
-```
-
-`rust-toolchain.toml`（放置于应用项目根目录）：
-
-```toml
-[toolchain]
-channel = "esp"
 ```
 
 ### RISC-V 系列（ESP32-C2 / C3 / C6 / H2）
@@ -358,7 +347,3 @@ if resp.is_success() {
     println!("Response: {:?}", core::str::from_utf8(body));
 }
 ```
-
-## 贡献
-
-欢迎提交 Issue 和 PR！
