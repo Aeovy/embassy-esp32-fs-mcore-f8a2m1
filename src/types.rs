@@ -345,6 +345,13 @@ pub struct DtuAtHttpConfig {
     pub retry_payload_on_http_timeout: bool,
     pub post_entm_settle_time: Duration,
     pub max_response_len: usize,
+    /// AT+S 后 DTU 会重启，probe_command_mode 重试等待 DTU 上线的总超时时间。
+    /// 建议设置为 DTU 重启时间的 2 倍，默认 60s。
+    pub at_ready_timeout: Duration,
+    /// 每次 AT\r\n 探测失败后的等待间隔，默认 2s。
+    pub at_ready_poll_interval: Duration,
+    /// 进入命令模式时先发 AT 探测（而非直接 +++），用于 AT+S 重启后 DTU 已在命令模式的场景。
+    pub probe_cmd_mode_first: bool,
 }
 
 impl Default for DtuAtHttpConfig {
@@ -368,6 +375,9 @@ impl Default for DtuAtHttpConfig {
             retry_payload_on_http_timeout: false,
             post_entm_settle_time: Duration::from_millis(500),
             max_response_len: 4096,
+            at_ready_timeout: Duration::from_secs(60),
+            at_ready_poll_interval: Duration::from_secs(2),
+            probe_cmd_mode_first: false,
         }
     }
 }

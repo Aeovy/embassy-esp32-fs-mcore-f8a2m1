@@ -419,6 +419,22 @@ impl<'d> DtuAtHttpClient<'d> {
     }
 
     async fn enter_command_mode(&mut self) -> Result<(), DtuAtError> {
+        // 如果开启了优先探测模式（probe_cmd_mode_first），先尝试 AT 指令直接探测。
+        // 适用于 AT+S 重启后 DTU 已回到命令模式的场景，可跳过 +++ 握手。
+        if self.config.probe_cmd_mode_first {
+            dtu_debug!("dtu_http try AT probe before +++");
+            match self.probe_command_mode().await {
+                Ok(()) => {
+                    dtu_debug!("dtu_http already in command mode (AT probe before +++)");
+                    return Ok(());
+                }
+                Err(DtuAtError::Timeout) => {
+                    dtu_warn!("dtu_http AT probe (pre-+++) timed out, try +++");
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
         dtu_debug!("dtu_http enter command mode via +++");
         Timer::after(self.config.cmd_guard_time).await;
         self.write_all(b"+++").await?;
@@ -456,24 +472,61 @@ impl<'d> DtuAtHttpClient<'d> {
         }
     }
 
+    /// 发送 AT\r\n 探测，若 DTU 正在重启则按 `at_ready_timeout` / `at_ready_poll_interval`
+    /// 配置循环重试，直到收到 OK 或超时。
     async fn probe_command_mode(&mut self) -> Result<(), DtuAtError> {
-        dtu_debug!("dtu_http >> AT (probe)");
-        self.write_all(b"AT\r\n").await?;
+        let deadline = Instant::now() + self.config.at_ready_timeout;
+        let mut attempt = 0u32;
 
-        let rsp = self
-            .read_until_idle(Duration::from_secs(2), self.config.at_idle_timeout)
-            .await?;
-        log_response_preview("probe_cmd", &rsp);
+        loop {
+            attempt += 1;
+            dtu_debug!("dtu_http >> AT (probe attempt={})", attempt);
+            self.write_all(b"AT\r\n").await?;
 
-        if contains_at_error(&rsp) {
-            return Err(DtuAtError::AtRejected);
+            let rsp = match self
+                .read_until_idle(self.config.at_first_timeout, self.config.at_idle_timeout)
+                .await
+            {
+                Ok(r) => r,
+                Err(DtuAtError::Timeout) => {
+                    if Instant::now() >= deadline {
+                        dtu_warn!(
+                            "dtu_http AT probe deadline exceeded (attempt={})",
+                            attempt
+                        );
+                        return Err(DtuAtError::Timeout);
+                    }
+                    dtu_debug!(
+                        "dtu_http AT probe timeout (attempt={}), DTU 可能正在重启，等待重试...",
+                        attempt
+                    );
+                    Timer::after(self.config.at_ready_poll_interval).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+
+            log_response_preview("probe_cmd", &rsp);
+
+            if contains_at_error(&rsp) {
+                return Err(DtuAtError::AtRejected);
+            }
+            if contains_ok(&rsp) {
+                dtu_debug!("dtu_http probe success (attempt={})", attempt);
+                return Ok(());
+            }
+
+            // 收到数据但没有 OK（可能是 DTU 启动 URC），继续等待
+            if Instant::now() >= deadline {
+                dtu_warn!(
+                    "dtu_http AT probe deadline exceeded (no OK, attempt={})",
+                    attempt
+                );
+                return Err(DtuAtError::BadResponse);
+            }
+            dtu_debug!("dtu_http AT probe no OK (attempt={}), retry after poll interval", attempt);
+            Timer::after(self.config.at_ready_poll_interval).await;
         }
-        if !contains_ok(&rsp) {
-            return Err(DtuAtError::BadResponse);
-        }
-
-        dtu_debug!("dtu_http probe success, treat as command mode");
-        Ok(())
     }
 
     async fn send_ok_cmd(&mut self, cmd: &str) -> Result<(), DtuAtError> {
