@@ -42,17 +42,17 @@ FS-MCore-F8A2M1（4G DTU 模块）的异步 AT 指令驱动，基于 Embassy 框
 
 ## 引入依赖
 
-**Step 1**：在应用项目的 `Cargo.toml` 中添加依赖，并指定你的芯片型号：
+**Step 1**：在应用项目的 `Cargo.toml` 中添加依赖，**必须显式指定芯片型号与日志后端**（本库无 default features）：
 
 ```toml
 [dependencies]
 # 以 ESP32-S3 + defmt 日志为例
-embassy-fs-mcore-f8a2m1 = { git = "https://github.com/your-org/esp32-fs-mcore-f8a2m1", features = ["esp32s3"] }
+embassy-fs-mcore-f8a2m1 = { git = "https://github.com/your-org/esp32-fs-mcore-f8a2m1", features = ["esp32s3", "dtu-log-defmt"] }
 ```
 
 > 若使用本地路径开发：
 > ```toml
-> embassy-fs-mcore-f8a2m1 = { path = "/xx/esp32-fs-mcore-f8a2m1", features = ["esp32s3"] }
+> embassy-fs-mcore-f8a2m1 = { path = "/xx/esp32-fs-mcore-f8a2m1", features = ["esp32s3", "dtu-log-defmt"] }
 > ```
 
 ---
@@ -100,17 +100,9 @@ build-std = ["alloc", "core"]
 
 两种日志后端互斥，**必须且只能启用一个**：
 
-### 方式一：`defmt`（默认）
+### 方式一：`defmt`
 
 适合配合 `probe-rs` / `espflash --log-format defmt` 使用。
-
-```toml
-[dependencies]
-embassy-fs-mcore-f8a2m1 = { ..., features = ["esp32s3"] }
-# dtu-log-defmt 已包含在 default features 中，无需额外声明
-```
-
-或显式指定：
 
 ```toml
 embassy-fs-mcore-f8a2m1 = { ..., features = ["esp32s3", "dtu-log-defmt"] }
