@@ -1,9 +1,6 @@
 #[cfg(all(feature = "dtu-log-defmt", feature = "dtu-log-esp-println"))]
 compile_error!("日志后端特性冲突：`dtu-log-defmt` 与 `dtu-log-esp-println` 只能启用一个。");
 
-#[cfg(not(any(feature = "dtu-log-defmt", feature = "dtu-log-esp-println")))]
-compile_error!("未启用日志后端特性：请启用 `dtu-log-defmt` 或 `dtu-log-esp-println` 之一。");
-
 /// 调试日志输出（仅在 debug 构建启用）。
 #[cfg(all(debug_assertions, feature = "dtu-log-defmt"))]
 #[inline]
@@ -32,14 +29,14 @@ pub(crate) fn emit_warn(msg: &str) {
     esp_println::println!("[WARN ] {}", msg);
 }
 
-/// release 构建下剔除内部调试输出。
-#[cfg(not(debug_assertions))]
+/// release 构建或未启用任何日志后端时：零开销 no-op。
+#[cfg(not(all(debug_assertions, any(feature = "dtu-log-defmt", feature = "dtu-log-esp-println"))))]
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn emit_debug(_msg: &str) {}
 
-/// release 构建下剔除内部调试输出。
-#[cfg(not(debug_assertions))]
+/// release 构建或未启用任何日志后端时：零开销 no-op。
+#[cfg(not(all(debug_assertions, any(feature = "dtu-log-defmt", feature = "dtu-log-esp-println"))))]
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn emit_warn(_msg: &str) {}

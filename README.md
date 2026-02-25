@@ -121,14 +121,8 @@ embassy-fs-mcore-f8a2m1 = { ..., features = ["esp32s3", "dtu-log-defmt"] }
 适合配合 `espflash flash --monitor`（普通串口）使用。
 
 ```toml
-embassy-fs-mcore-f8a2m1 = {
-    ...,
-    default-features = false,
-    features = ["esp32s3", "dtu-log-esp-println"]
-}
+embassy-fs-mcore-f8a2m1 = { ..., features = ["esp32s3", "dtu-log-esp-println"] }
 ```
-
-> **注意**：`default-features = false` 必须加，否则 `dtu-log-defmt`（default）与 `dtu-log-esp-println` 同时启用会编译报错。
 
 ---
 
