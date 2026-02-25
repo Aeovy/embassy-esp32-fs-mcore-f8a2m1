@@ -93,7 +93,7 @@ impl<'d> DtuAtHttpClient<'d> {
             .await
     }
 
-    /// 完整请求接口。
+    /// 完整请求接口（带请求级重试）。
     ///
     /// # 输入
     /// - `req`: 完整请求结构（方法、URL、Header、Body 等）。
@@ -103,14 +103,55 @@ impl<'d> DtuAtHttpClient<'d> {
     ///
     /// # 错误
     /// 返回 [`DtuAtError`]，例如超时、AT 拒绝、响应格式不合法等。
+    /// 在 `max_request_attempts` 次全部失败后才返回错误。
     pub async fn request(&mut self, req: &HttpRequest<'_>) -> Result<HttpResponse, DtuAtError> {
+        self.validate_request(req)?;
+
+        let max = self.config.max_request_attempts.max(1);
+        let mut last_err = DtuAtError::Timeout;
+
+        for attempt in 1..=max {
+            if attempt > 1 {
+                dtu_warn!(
+                    "dtu_http retrying request (attempt={}/{})",
+                    attempt,
+                    max
+                );
+            }
+            match self.request_inner(req).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    dtu_warn!(
+                        "dtu_http request attempt={}/{} failed: {}",
+                        attempt,
+                        max,
+                        e.as_str()
+                    );
+                    last_err = e;
+                    // Transport 错误和配置错误不重试
+                    if matches!(
+                        e,
+                        DtuAtError::Transport(_)
+                            | DtuAtError::InvalidConfig(_)
+                            | DtuAtError::ResponseTooLarge
+                    ) {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Err(last_err)
+    }
+
+    /// 单次请求执行体（不含重试，由 `request()` 调用）。
+    async fn request_inner(&mut self, req: &HttpRequest<'_>) -> Result<HttpResponse, DtuAtError> {
         dtu_debug!(
             "dtu_http request start, ch={}, method={}, url={}",
             self.config.channel,
             req.method.as_at(),
             req.url
         );
-        self.validate_request(req)?;
 
         self.enter_command_mode().await.map_err(|e| {
             dtu_warn!("dtu_http step=enter_command_mode failed: {}", e.as_str());
@@ -418,29 +459,39 @@ impl<'d> DtuAtHttpClient<'d> {
         Ok(())
     }
 
+    /// 进入 DTU 命令模式（状态机实现，覆盖所有 DTU 状态）。
+    ///
+    /// 处理场景：
+    /// - DTU 已在命令模式（AT+S 重启后）→ Step 1 AT 探测直接成功
+    /// - DTU 在数据/HTTP 透传模式 → Step 2 `+++` 进入命令模式
+    /// - DTU 正在重启（AT+S 触发）→ Step 3 循环等待直到 `enter_cmd_timeout`
     async fn enter_command_mode(&mut self) -> Result<(), DtuAtError> {
-        // 如果开启了优先探测模式（probe_cmd_mode_first），先尝试 AT 指令直接探测。
-        // 适用于 AT+S 重启后 DTU 已回到命令模式的场景，可跳过 +++ 握手。
-        if self.config.probe_cmd_mode_first {
-            dtu_debug!("dtu_http try AT probe before +++");
-            match self.probe_command_mode().await {
-                Ok(()) => {
-                    dtu_debug!("dtu_http already in command mode (AT probe before +++)");
-                    return Ok(());
-                }
-                Err(DtuAtError::Timeout) => {
-                    dtu_warn!("dtu_http AT probe (pre-+++) timed out, try +++");
-                }
-                Err(e) => return Err(e),
+        let deadline = Instant::now() + self.config.enter_cmd_timeout;
+
+        // Step 1: 丢弃 UART 残留数据，然后快速 AT 探测。
+        // 如果 DTU 已在命令模式（如 AT+S 后重启回命令模式），直接返回。
+        self.drain_uart().await;
+        match self.quick_at_probe().await {
+            Ok(()) => {
+                dtu_debug!("dtu_http enter_cmd: already in command mode (AT probe)");
+                return Ok(());
             }
+            // ERROR: DTU 有响应但在非命令模式（数据模式把 AT\r\n 当 payload 转发）
+            // Timeout / BadResponse: DTU 不在命令模式或处于重启中
+            // 以上均继续走 +++ 流程
+            Err(DtuAtError::AtRejected | DtuAtError::BadResponse | DtuAtError::Timeout) => {}
+            Err(e) => return Err(e),
         }
 
+        // Step 2: guard time + `+++`，从数据/HTTP 透传模式进入命令模式。
         dtu_debug!("dtu_http enter command mode via +++");
         Timer::after(self.config.cmd_guard_time).await;
         self.write_all(b"+++").await?;
+        // +++ 后同样需要静默窗口，让 DTU 识别转义序列
+        Timer::after(Duration::from_millis(300)).await;
 
         match self
-            .read_until_idle(self.config.at_first_timeout, self.config.at_idle_timeout)
+            .read_until_idle_quiet(self.config.at_first_timeout, self.config.at_idle_timeout)
             .await
         {
             Ok(rsp) => {
@@ -450,82 +501,122 @@ impl<'d> DtuAtHttpClient<'d> {
                     return Ok(());
                 }
 
-                if self.config.enable_command_probe_fallback {
-                    if contains_at_error(&rsp) {
-                        dtu_warn!("dtu_http +++ got ERR/ERROR, fallback to AT probe");
-                    } else {
-                        dtu_warn!("dtu_http +++ no OK, fallback to AT probe");
-                    }
-                    return self.probe_command_mode().await;
+                if contains_at_error(&rsp) {
+                    // +++ 被 DTU 当成 AT 命令处理→ 已在命令模式，drain 并用 AT 确认
+                    dtu_warn!("dtu_http +++ got ERROR (already in cmd mode), drain + confirm");
+                    self.drain_uart().await;
+                    return self.quick_at_probe().await;
                 }
 
-                return Err(DtuAtError::BadResponse);
+                // 收到 URC 等其他内容，进入等待循环
+                dtu_warn!("dtu_http +++ got unexpected data, entering wait loop");
+                self.wait_for_command_mode(deadline).await
             }
             Err(DtuAtError::Timeout) => {
-                if self.config.enable_command_probe_fallback {
-                    dtu_warn!("dtu_http +++ timeout, fallback to AT probe");
-                    return self.probe_command_mode().await;
-                }
-                return Err(DtuAtError::Timeout);
+                // +++ 无响应：DTU 可能正在重启（AT+S 触发），循环等待
+                dtu_warn!("dtu_http +++ timeout, DTU may be rebooting, wait for command mode...");
+                self.wait_for_command_mode(deadline).await
             }
-            Err(e) => return Err(e),
+            Err(e) => Err(e),
         }
     }
 
-    /// 发送 AT\r\n 探测，若 DTU 正在重启则按 `at_ready_timeout` / `at_ready_poll_interval`
-    /// 配置循环重试，直到收到 OK 或超时。
-    async fn probe_command_mode(&mut self) -> Result<(), DtuAtError> {
-        let deadline = Instant::now() + self.config.at_ready_timeout;
+    /// 单次 `AT\r\n` 快速探测（不重试）。
+    ///
+    /// - `Ok(())`: DTU 在命令模式且响应正常
+    /// - `Err(AtRejected)`: 收到 ERROR（DTU 在数据模式时出现）
+    /// - `Err(Timeout)`: 无响应
+    /// - `Err(BadResponse)`: 收到数据但没有 OK
+    async fn quick_at_probe(&mut self) -> Result<(), DtuAtError> {
+        dtu_debug!("dtu_http >> AT (probe)");
+        self.write_all(b"AT\r\n").await?;
+
+        match self
+            .read_until_idle(self.config.at_first_timeout, self.config.at_idle_timeout)
+            .await
+        {
+            Ok(rsp) => {
+                log_response_preview("at_probe", &rsp);
+                if contains_at_error(&rsp) {
+                    return Err(DtuAtError::AtRejected);
+                }
+                if contains_ok(&rsp) {
+                    return Ok(());
+                }
+                Err(DtuAtError::BadResponse)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 在 `deadline` 前循环发 `AT\r\n`，等待 DTU 从重启中恢复并进入命令模式。
+    async fn wait_for_command_mode(&mut self, deadline: Instant) -> Result<(), DtuAtError> {
         let mut attempt = 0u32;
 
         loop {
+            if Instant::now() >= deadline {
+                dtu_warn!(
+                    "dtu_http wait_cmd deadline exceeded (attempt={})",
+                    attempt
+                );
+                return Err(DtuAtError::Timeout);
+            }
+
+            Timer::after(self.config.enter_cmd_poll).await;
             attempt += 1;
-            dtu_debug!("dtu_http >> AT (probe attempt={})", attempt);
+            dtu_debug!("dtu_http >> AT (wait_cmd attempt={})", attempt);
             self.write_all(b"AT\r\n").await?;
 
-            let rsp = match self
+            match self
                 .read_until_idle(self.config.at_first_timeout, self.config.at_idle_timeout)
                 .await
             {
-                Ok(r) => r,
-                Err(DtuAtError::Timeout) => {
-                    if Instant::now() >= deadline {
+                Ok(rsp) => {
+                    log_response_preview("wait_cmd", &rsp);
+
+                    if contains_ok(&rsp) {
+                        dtu_debug!("dtu_http wait_cmd OK (attempt={})", attempt);
+                        return Ok(());
+                    }
+
+                    if contains_at_error(&rsp) {
+                        // 在命令模式但有残留 ERROR，drain 后继续重试
                         dtu_warn!(
-                            "dtu_http AT probe deadline exceeded (attempt={})",
+                            "dtu_http wait_cmd ERROR (attempt={}), drain and retry",
                             attempt
                         );
-                        return Err(DtuAtError::Timeout);
+                        self.drain_uart().await;
                     }
+                    // 收到 URC 或其他内容，继续等待
+                }
+                Err(DtuAtError::Timeout) => {
                     dtu_debug!(
-                        "dtu_http AT probe timeout (attempt={}), DTU 可能正在重启，等待重试...",
+                        "dtu_http wait_cmd timeout (attempt={}), DTU still starting...",
                         attempt
                     );
-                    Timer::after(self.config.at_ready_poll_interval).await;
-                    continue;
                 }
                 Err(e) => return Err(e),
-            };
-
-            log_response_preview("probe_cmd", &rsp);
-
-            if contains_at_error(&rsp) {
-                return Err(DtuAtError::AtRejected);
             }
-            if contains_ok(&rsp) {
-                dtu_debug!("dtu_http probe success (attempt={})", attempt);
-                return Ok(());
-            }
+        }
+    }
 
-            // 收到数据但没有 OK（可能是 DTU 启动 URC），继续等待
-            if Instant::now() >= deadline {
-                dtu_warn!(
-                    "dtu_http AT probe deadline exceeded (no OK, attempt={})",
-                    attempt
-                );
-                return Err(DtuAtError::BadResponse);
+    /// 丢弃 UART 缓冲区中所有待读数据（使用 50ms 短超时，快速排空）。
+    async fn drain_uart(&mut self) {
+        let mut buf = [0u8; 256];
+        let mut total = 0usize;
+        loop {
+            match with_timeout(
+                Duration::from_millis(50),
+                AsyncRead::read(&mut self.transport, &mut buf),
+            )
+            .await
+            {
+                Ok(Ok(n)) if n > 0 => total += n,
+                _ => break,
             }
-            dtu_debug!("dtu_http AT probe no OK (attempt={}), retry after poll interval", attempt);
-            Timer::after(self.config.at_ready_poll_interval).await;
+        }
+        if total > 0 {
+            dtu_debug!("dtu_http drain_uart: discarded {} bytes", total);
         }
     }
 

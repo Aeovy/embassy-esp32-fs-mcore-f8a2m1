@@ -327,31 +327,59 @@ fn eq_ascii_case_prefix(line: &[u8], prefix: &[u8]) -> bool {
 /// DTU HTTP 客户端配置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DtuAtHttpConfig {
+    // ── 业务参数 ──────────────────────────────────────────────────────────────
+    /// DTU 通道号（1~4），对应 AT+WKMOD{N}、AT+HTPURL{N} 等指令的编号。
     pub channel: u8,
+    /// DTU 固件 HTTP 请求超时（秒），写入 AT+HTPTIM 指令。
     pub request_timeout_secs: u16,
+    /// AT+HTPPK 响应过滤掩码（0x03 = 返回头+体）。
     pub response_filter_mask: u8,
+    /// 成功响应（2xx）时要求必须有 body；204/304 豁免。
     pub require_body_on_success: bool,
+
+    // ── AT 命令时序 ───────────────────────────────────────────────────────────
+    /// `+++` 前的静默时间（Hayes 规范要求 ≥1s），建议 ≥1200ms。
     pub cmd_guard_time: Duration,
+    /// AT 命令等待第一个响应字节的超时。
     pub at_first_timeout: Duration,
+    /// AT 命令收到首字节后的空闲超时（停止收集响应）。
     pub at_idle_timeout: Duration,
+
+    // ── HTTP 响应接收时序 ──────────────────────────────────────────────────────
+    /// 等待 HTTP 响应第一字节的超时（网络 RTT 较长时应增大）。
     pub http_first_timeout: Duration,
+    /// HTTP 响应空闲超时（用于判断本次数据接收结束）。
     pub http_idle_timeout: Duration,
+    /// `collect_followup` 轮询等待首字节的超时。
     pub http_followup_first_timeout: Duration,
+    /// `collect_followup` 总时限。
     pub http_followup_timeout: Duration,
+    /// 等待 `FS@HTTP OK:` 就绪信号的总时限。
     pub http_ready_timeout: Duration,
+
+    // ── 命令模式进入与恢复 ─────────────────────────────────────────────────────
+    /// `enter_command_mode` 的总超时：覆盖从首次尝试到 DTU 重启恢复的全程。
+    /// 应 ≥ DTU AT+S 重启时间，建议 60s。
+    pub enter_cmd_timeout: Duration,
+    /// `wait_for_command_mode` 循环中每次 AT 探测的间隔。
+    pub enter_cmd_poll: Duration,
+
+    // ── 请求级重试 ────────────────────────────────────────────────────────────
+    /// 单次请求失败后的最大重试总次数（含首次），≥1。
+    /// 用于 ESP32 重启但 DTU 未重启等导致 AT 命令偶发失败的场景。
+    pub max_request_attempts: u8,
+
+    // ── 可选功能 ──────────────────────────────────────────────────────────────
+    /// 发送前开启 DTU 固件调试 URC（AT+DEBUG=ON）。
     pub enable_modem_debug_urc: bool,
+    /// 发送前查询并打印链路状态（AT+CREG? / AT+RUNST?）。
     pub query_link_status_before_send: bool,
-    pub enable_command_probe_fallback: bool,
+    /// HTTP 响应超时后重发一次 payload 再重试。
     pub retry_payload_on_http_timeout: bool,
+    /// AT+S 后、进入透传模式前的额外等待时间。
     pub post_entm_settle_time: Duration,
+    /// 单次请求允许的最大响应缓冲长度（字节）。
     pub max_response_len: usize,
-    /// AT+S 后 DTU 会重启，probe_command_mode 重试等待 DTU 上线的总超时时间。
-    /// 建议设置为 DTU 重启时间的 2 倍，默认 60s。
-    pub at_ready_timeout: Duration,
-    /// 每次 AT\r\n 探测失败后的等待间隔，默认 2s。
-    pub at_ready_poll_interval: Duration,
-    /// 进入命令模式时先发 AT 探测（而非直接 +++），用于 AT+S 重启后 DTU 已在命令模式的场景。
-    pub probe_cmd_mode_first: bool,
 }
 
 impl Default for DtuAtHttpConfig {
@@ -361,7 +389,7 @@ impl Default for DtuAtHttpConfig {
             request_timeout_secs: 10,
             response_filter_mask: 0x03,
             require_body_on_success: true,
-            cmd_guard_time: Duration::from_millis(200),
+            cmd_guard_time: Duration::from_millis(1200),
             at_first_timeout: Duration::from_secs(2),
             at_idle_timeout: Duration::from_millis(250),
             http_first_timeout: Duration::from_secs(60),
@@ -369,15 +397,14 @@ impl Default for DtuAtHttpConfig {
             http_followup_first_timeout: Duration::from_millis(700),
             http_followup_timeout: Duration::from_secs(20),
             http_ready_timeout: Duration::from_secs(25),
+            enter_cmd_timeout: Duration::from_secs(60),
+            enter_cmd_poll: Duration::from_secs(2),
+            max_request_attempts: 2,
             enable_modem_debug_urc: false,
             query_link_status_before_send: false,
-            enable_command_probe_fallback: false,
             retry_payload_on_http_timeout: false,
             post_entm_settle_time: Duration::from_millis(500),
             max_response_len: 4096,
-            at_ready_timeout: Duration::from_secs(60),
-            at_ready_poll_interval: Duration::from_secs(2),
-            probe_cmd_mode_first: false,
         }
     }
 }
