@@ -10,7 +10,7 @@ use esp_hal::{Async, uart::Uart};
 use crate::dbglog::{dtu_debug, dtu_warn};
 use crate::parser::{
     build_head_line, contains_at_error, contains_http_fail, contains_http_ready, contains_ok,
-    parse_status_code,
+    parse_http_fail_code, parse_status_code,
 };
 use crate::types::{DtuAtError, DtuAtHttpConfig, HttpRequest, HttpResponse};
 
@@ -238,6 +238,13 @@ impl<'d> DtuAtHttpClient<'d> {
 
         let raw = self.collect_followup_http_data(raw).await?;
         log_response_preview("http", &raw);
+
+        // 检测 DTU 固件级 HTTP 失败（FS@HTTP FAIL:N），通常为 TLS 握手失败或连接错误。
+        if contains_http_fail(&raw) {
+            let code = parse_http_fail_code(&raw);
+            dtu_warn!("dtu_http FS@HTTP FAIL:{} (TLS/connection error)", code);
+            return Err(DtuAtError::HttpFail(code));
+        }
 
         let resp = HttpResponse {
             status_code: parse_status_code(&raw),

@@ -63,6 +63,26 @@ pub(crate) fn contains_http_fail(buf: &[u8]) -> bool {
     find_subslice(buf, b"FS@HTTP FAIL:").is_some()
 }
 
+/// 解析 `FS@HTTP FAIL:N` 中的错误码 N（解析失败返回 0）。
+pub(crate) fn parse_http_fail_code(buf: &[u8]) -> u8 {
+    let marker = b"FS@HTTP FAIL:";
+    let Some(idx) = find_subslice(buf, marker) else {
+        return 0;
+    };
+    let rest = &buf[idx + marker.len()..];
+    let mut value: u8 = 0;
+    let mut found = false;
+    for &b in rest {
+        if b.is_ascii_digit() {
+            found = true;
+            value = value.saturating_mul(10).saturating_add(b - b'0');
+        } else if found {
+            break;
+        }
+    }
+    value
+}
+
 pub(crate) fn contains_at_error(buf: &[u8]) -> bool {
     find_subslice(buf, b"ERR:").is_some() || find_subslice(buf, b"ERROR").is_some()
 }

@@ -382,6 +382,9 @@ pub enum DtuAtError {
     BadResponse,
     ResponseTooLarge,
     BodyMissing,
+    /// DTU 固件级 HTTP 失败（FS@HTTP FAIL:N），通常为 TLS/连接层错误。
+    /// 携带 DTU 返回的错误码（0 表示未解析到）。
+    HttpFail(u8),
 }
 
 impl DtuAtError {
@@ -395,6 +398,7 @@ impl DtuAtError {
             Self::BadResponse => "AT response missing OK",
             Self::ResponseTooLarge => "response too large",
             Self::BodyMissing => "http body missing",
+            Self::HttpFail(_) => "DTU HTTP FAIL (TLS/connection error)",
         }
     }
 }
