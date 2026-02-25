@@ -29,14 +29,20 @@ pub(crate) fn emit_warn(msg: &str) {
     esp_println::println!("[WARN ] {}", msg);
 }
 
-/// release 构建或未启用任何日志后端时：零开销 no-op。
-#[cfg(not(all(debug_assertions, any(feature = "dtu-log-defmt", feature = "dtu-log-esp-println"))))]
+/// release 构建或未启用任何日志后端时
+#[cfg(not(all(
+    debug_assertions,
+    any(feature = "dtu-log-defmt", feature = "dtu-log-esp-println")
+)))]
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn emit_debug(_msg: &str) {}
 
-/// release 构建或未启用任何日志后端时：零开销 no-op。
-#[cfg(not(all(debug_assertions, any(feature = "dtu-log-defmt", feature = "dtu-log-esp-println"))))]
+/// release 构建或未启用任何日志后端时
+#[cfg(not(all(
+    debug_assertions,
+    any(feature = "dtu-log-defmt", feature = "dtu-log-esp-println")
+)))]
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn emit_warn(_msg: &str) {}

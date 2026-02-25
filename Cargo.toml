@@ -21,7 +21,6 @@ esp32c3 = ["esp-hal/esp32c3"]
 esp32c6 = ["esp-hal/esp32c6"]
 esp32h2 = ["esp-hal/esp32h2"]
 
-# ── 日志后端（二选一，默认使用 defmt）──────────────────────────────────
 default = []
 dtu-log-defmt = [
     "dep:defmt",
